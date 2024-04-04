@@ -1,0 +1,26 @@
+.version 7.0
+.target sm_68
+
+.reg .i64 rbp;
+.reg .i64 rax;
+.reg .i64 rbx;
+.reg .i64 rcx;
+.reg .i64 rdx;
+.reg .i64 rbp;
+.reg .i64 rsp;
+.reg .i64 rsi;
+.reg .i64 rdi;
+.reg .i64 r8;
+.reg .i64 r9;
+.reg .i64 r10;
+.reg .i64 r11;
+.reg .i64 r12;
+.reg .i64 r13;
+.reg .i64 r14;
+.reg .i64 r15;
+.reg .pred cf;
+.reg .pred zf;
+
+#def STACK_SIZE 64
+.local .u8 stack[STACK_SIZE];
+mov.u64, rsp, STACK_SIZE;

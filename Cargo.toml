@@ -1,0 +1,9 @@
+[package]
+name = "fuzz-fast"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.81"
+capstone = "0.12.0"
+smallvec = "1.13.2"
