@@ -4,9 +4,8 @@ use crate::ptx::{
 use anyhow::{anyhow, Result};
 use capstone::arch::x86;
 use capstone::arch::x86::X86Insn::*;
-use capstone::arch::x86::X86OperandType;
 use capstone::arch::x86::X86Reg::*;
-use capstone::arch::x86::{X86Insn, X86InsnDetail, X86Operand};
+use capstone::arch::x86::{X86Insn, X86OperandType};
 use capstone::prelude::*;
 use capstone::Insn;
 use smallvec::smallvec;
@@ -45,228 +44,312 @@ pub fn try_push_ptx(insn: &Insn, cs: &Capstone, ptx: &mut Vec<PtxInsn>) -> Resul
     let detail = arch_detail
         .x86()
         .ok_or(anyhow!("Failed to get instruction detail"))?;
+    let mut operands = detail.operands();
 
-    let id: X86Insn = unsafe { transmute(insn.id().0) };
-    match id {
-        X86_INS_PUSH => {
-            let src = get_operand(detail, 0)?;
-            match src.op_type {
-                X86OperandType::Reg(src) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::Sub,
-                        storage: None,
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![PtxType::S64],
-                        operands: smallvec![
-                            PtxOperand::Reg(reg_name(X86_REG_RSP, cs)?),
-                            PtxOperand::Reg(reg_name(X86_REG_RSP, cs)?),
-                            PtxOperand::Imm(reg_size(src) as i64)
-                        ],
-                    });
-                    ptx.push(PtxInsn {
-                        label: None,
-                        pred: None,
-                        opcode: PtxOpcode::St,
-                        storage: Some(PtxStorage::Local),
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(src)],
-                        operands: smallvec![
-                            PtxOperand::Array {
-                                name: STACK.to_string(),
-                                offsets: smallvec![PtxArrayOffset::Reg(reg_name(X86_REG_RSP, cs)?)]
-                            },
-                            PtxOperand::Reg(reg_name(src.0 as u32, cs)?),
-                        ],
-                    });
-                }
-                _ => todo!(),
-            }
+    let matcher = (
+        unsafe { transmute::<InsnId, X86Insn>(insn.id()) },
+        operands.next().map(|o| o.op_type),
+        operands.next().map(|o| o.op_type),
+        operands.next().map(|o| o.op_type),
+    );
+    match matcher {
+        (X86_INS_PUSH, Some(X86OperandType::Reg(src)), None, None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Sub,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![PtxType::S64],
+                operands: smallvec![
+                    PtxOperand::Reg(reg_name(X86_REG_RSP, cs)?),
+                    PtxOperand::Reg(reg_name(X86_REG_RSP, cs)?),
+                    PtxOperand::Imm(reg_size(src) as i64)
+                ],
+            });
+            ptx.push(PtxInsn {
+                label: None,
+                pred: None,
+                opcode: PtxOpcode::St,
+                uni: None,
+                storage: Some(PtxStorage::Local),
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![ptx_reg_type(src)],
+                operands: smallvec![
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![PtxArrayOffset::Reg(reg_name(X86_REG_RSP, cs)?)]
+                    },
+                    PtxOperand::Reg(reg_name(src.0 as u32, cs)?),
+                ],
+            });
         }
-        X86_INS_MOV => {
-            let dst = get_operand(detail, 0)?;
-            let src = get_operand(detail, 1)?;
-            match (dst.op_type, src.op_type) {
-                (X86OperandType::Reg(dst), X86OperandType::Reg(src)) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::Mov,
-                        storage: None,
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(dst)],
-                        operands: smallvec![
-                            PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
-                            PtxOperand::Reg(reg_name(src.0 as u32, cs)?),
-                        ],
-                    });
-                }
-                (X86OperandType::Reg(dst), X86OperandType::Imm(src)) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::Mov,
-                        storage: None,
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(dst)],
-                        operands: smallvec![
-                            PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
-                            PtxOperand::Imm(src),
-                        ],
-                    });
-                }
-                (X86OperandType::Reg(dst), X86OperandType::Mem(src)) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::Mov,
-                        storage: None,
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(dst)],
-                        operands: smallvec![
-                            PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
-                            PtxOperand::Array {
-                                name: STACK.to_string(),
-                                offsets: smallvec![
-                                    PtxArrayOffset::Reg(reg_name(src.base().0 as u32, cs)?),
-                                    PtxArrayOffset::Imm(src.disp())
-                                ]
-                            },
-                        ],
-                    });
-                }
-                (X86OperandType::Mem(dst), X86OperandType::Reg(src)) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::St,
-                        storage: Some(PtxStorage::Local),
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(src)],
-                        operands: smallvec![
-                            PtxOperand::Array {
-                                name: STACK.to_string(),
-                                offsets: smallvec![
-                                    PtxArrayOffset::Reg(reg_name(dst.base().0 as u32, cs)?),
-                                    PtxArrayOffset::Imm(dst.disp())
-                                ]
-                            },
-                            PtxOperand::Reg(reg_name(src.0 as u32, cs)?),
-                        ],
-                    });
-                }
-                (X86OperandType::Mem(dst), X86OperandType::Imm(src)) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::St,
-                        storage: Some(PtxStorage::Local),
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![PtxType::S64],
-                        operands: smallvec![
-                            PtxOperand::Array {
-                                name: STACK.to_string(),
-                                offsets: smallvec![
-                                    PtxArrayOffset::Reg(reg_name(dst.base().0 as u32, cs)?),
-                                    PtxArrayOffset::Imm(dst.disp())
-                                ]
-                            },
-                            PtxOperand::Imm(src),
-                        ],
-                    });
-                }
-                _ => todo!(),
-            }
+        (X86_INS_MOV, Some(X86OperandType::Reg(dst)), Some(X86OperandType::Reg(src)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Mov,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![ptx_reg_type(dst)],
+                operands: smallvec![
+                    PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
+                    PtxOperand::Reg(reg_name(src.0 as u32, cs)?),
+                ],
+            });
         }
-        X86_INS_CMP => {
-            let lhs = get_operand(detail, 0)?;
-            let rhs = get_operand(detail, 1)?;
-            match (lhs.op_type, rhs.op_type) {
-                (X86OperandType::Reg(lhs), X86OperandType::Mem(rhs)) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(insn.address())),
-                        pred: None,
-                        opcode: PtxOpcode::Setp,
-                        storage: None,
-                        cmp_op: Some(PtxCmpOp::Lt),
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(lhs)],
-                        operands: smallvec![
-                            PtxOperand::Reg(CF.to_string()),
-                            PtxOperand::Reg(reg_name(lhs.0 as u32, cs)?),
-                            PtxOperand::Array {
-                                name: STACK.to_string(),
-                                offsets: smallvec![
-                                    PtxArrayOffset::Reg(reg_name(rhs.base().0 as u32, cs)?),
-                                    PtxArrayOffset::Imm(rhs.disp())
-                                ]
-                            },
-                        ],
-                    });
-                    ptx.push(PtxInsn {
-                        label: None,
-                        pred: None,
-                        opcode: PtxOpcode::Setp,
-                        storage: None,
-                        cmp_op: Some(PtxCmpOp::Eq),
-                        bool_op: None,
-                        types: smallvec![ptx_reg_type(lhs)],
-                        operands: smallvec![
-                            PtxOperand::Reg(ZF.to_string()),
-                            PtxOperand::Reg(reg_name(lhs.0 as u32, cs)?),
-                            PtxOperand::Array {
-                                name: STACK.to_string(),
-                                offsets: smallvec![
-                                    PtxArrayOffset::Reg(reg_name(rhs.base().0 as u32, cs)?),
-                                    PtxArrayOffset::Imm(rhs.disp())
-                                ]
-                            },
-                        ],
-                    });
-                }
-                _ => todo!(),
-            }
+        (X86_INS_MOV, Some(X86OperandType::Reg(dst)), Some(X86OperandType::Imm(src)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Mov,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![ptx_reg_type(dst)],
+                operands: smallvec![
+                    PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
+                    PtxOperand::Imm(src),
+                ],
+            });
         }
-        X86_INS_JAE => {
-            let dst = get_operand(detail, 0)?;
-            match dst.op_type {
-                X86OperandType::Imm(dst) => {
-                    ptx.push(PtxInsn {
-                        label: Some(label_address(unsafe { transmute(dst) })),
-                        pred: Some(PtxPred {
-                            neg: true,
-                            pred: CF.to_string(),
-                        }),
-                        opcode: PtxOpcode::Setp,
-                        storage: None,
-                        cmp_op: None,
-                        bool_op: None,
-                        types: smallvec![PtxType::S64],
-                        operands: smallvec![PtxOperand::Reg(CF.to_string()), PtxOperand::Imm(dst),],
-                    });
-                }
-                _ => todo!(),
-            }
+        (X86_INS_MOV, Some(X86OperandType::Reg(dst)), Some(X86OperandType::Mem(src)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Mov,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![ptx_reg_type(dst)],
+                operands: smallvec![
+                    PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(src.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(src.disp())
+                        ]
+                    },
+                ],
+            });
+        }
+        (X86_INS_MOV, Some(X86OperandType::Mem(dst)), Some(X86OperandType::Reg(src)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::St,
+                uni: None,
+                storage: Some(PtxStorage::Local),
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![ptx_reg_type(src)],
+                operands: smallvec![
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(dst.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(dst.disp())
+                        ]
+                    },
+                    PtxOperand::Reg(reg_name(src.0 as u32, cs)?),
+                ],
+            });
+        }
+        (X86_INS_MOV, Some(X86OperandType::Mem(dst)), Some(X86OperandType::Imm(src)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::St,
+                uni: None,
+                storage: Some(PtxStorage::Local),
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![PtxType::S64],
+                operands: smallvec![
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(dst.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(dst.disp())
+                        ]
+                    },
+                    PtxOperand::Imm(src),
+                ],
+            });
+        }
+        (X86_INS_CMP, Some(X86OperandType::Reg(lhs)), Some(X86OperandType::Mem(rhs)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Setp,
+                uni: None,
+                storage: None,
+                cmp_op: Some(PtxCmpOp::Lt),
+                bool_op: None,
+                types: smallvec![ptx_reg_type(lhs)],
+                operands: smallvec![
+                    PtxOperand::Reg(CF.to_string()),
+                    PtxOperand::Reg(reg_name(lhs.0 as u32, cs)?),
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(rhs.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(rhs.disp())
+                        ]
+                    },
+                ],
+            });
+            ptx.push(PtxInsn {
+                label: None,
+                pred: None,
+                opcode: PtxOpcode::Setp,
+                uni: None,
+                storage: None,
+                cmp_op: Some(PtxCmpOp::Eq),
+                bool_op: None,
+                types: smallvec![ptx_reg_type(lhs)],
+                operands: smallvec![
+                    PtxOperand::Reg(ZF.to_string()),
+                    PtxOperand::Reg(reg_name(lhs.0 as u32, cs)?),
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(rhs.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(rhs.disp())
+                        ]
+                    },
+                ],
+            });
+        }
+        (X86_INS_CMP, Some(X86OperandType::Mem(lhs)), Some(X86OperandType::Imm(rhs)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Setp,
+                uni: None,
+                storage: None,
+                cmp_op: Some(PtxCmpOp::Lt),
+                bool_op: None,
+                types: smallvec![PtxType::S64],
+                operands: smallvec![
+                    PtxOperand::Reg(CF.to_string()),
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(lhs.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(lhs.disp())
+                        ]
+                    },
+                    PtxOperand::Imm(rhs),
+                ],
+            });
+            ptx.push(PtxInsn {
+                label: None,
+                pred: None,
+                opcode: PtxOpcode::Setp,
+                uni: None,
+                storage: None,
+                cmp_op: Some(PtxCmpOp::Eq),
+                bool_op: None,
+                types: smallvec![PtxType::S64],
+                operands: smallvec![
+                    PtxOperand::Reg(ZF.to_string()),
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(lhs.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(lhs.disp())
+                        ]
+                    },
+                    PtxOperand::Imm(rhs),
+                ],
+            });
+        }
+        (X86_INS_JAE, Some(X86OperandType::Imm(dst)), None, None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: Some(PtxPred {
+                    neg: true,
+                    pred: CF.to_string(),
+                }),
+                opcode: PtxOpcode::Setp,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![PtxType::S64],
+                operands: smallvec![PtxOperand::Reg(label_address(unsafe { transmute(dst) }))],
+            });
+        }
+        (X86_INS_ADD, Some(X86OperandType::Reg(dst)), Some(X86OperandType::Imm(val)), None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Add,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![PtxType::S64],
+                operands: smallvec![
+                    PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
+                    PtxOperand::Imm(val)
+                ],
+            });
+        }
+        (X86_INS_JMP, Some(X86OperandType::Imm(dst)), None, None) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Setp,
+                uni: Some(()),
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![],
+                operands: smallvec![PtxOperand::Reg(label_address(unsafe { transmute(dst) }))],
+            });
+        }
+        (
+            X86_INS_MOVZX,
+            Some(X86OperandType::Reg(dst)),
+            Some(X86OperandType::Mem(src)),
+            None,
+            None,
+        ) => {
+            ptx.push(PtxInsn {
+                label: Some(label_address(insn.address())),
+                pred: None,
+                opcode: PtxOpcode::Mov,
+                uni: None,
+                storage: None,
+                cmp_op: None,
+                bool_op: None,
+                types: smallvec![ptx_reg_type(dst)],
+                operands: smallvec![
+                    PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
+                    PtxOperand::Array {
+                        name: STACK.to_string(),
+                        offsets: smallvec![
+                            PtxArrayOffset::Reg(reg_name(src.base().0 as u32, cs)?),
+                            PtxArrayOffset::Imm(src.disp())
+                        ]
+                    },
+                ],
+            });
         }
         _ => todo!(),
     }
 
     Ok(())
-}
-
-fn get_operand(detail: &X86InsnDetail, n: usize) -> Result<X86Operand> {
-    detail
-        .operands()
-        .nth(n)
-        .ok_or(anyhow!("Failed to src operand"))
 }
 
 fn label_address(address: u64) -> String {
@@ -275,6 +358,9 @@ fn label_address(address: u64) -> String {
 
 fn ptx_reg_type(reg: RegId) -> PtxType {
     match reg_size(reg) {
+        1 => PtxType::U8,
+        2 => PtxType::U16,
+        4 => PtxType::U32,
         8 => PtxType::U64,
         _ => todo!(),
     }
@@ -282,6 +368,9 @@ fn ptx_reg_type(reg: RegId) -> PtxType {
 
 pub fn reg_size(reg: RegId) -> u8 {
     match reg.0 as u32 {
+        X86_REG_AL | X86_REG_BL | X86_REG_CL | X86_REG_DL => 1,
+        X86_REG_AX | X86_REG_BX | X86_REG_CX | X86_REG_DX => 2,
+        X86_REG_EAX | X86_REG_EBX | X86_REG_ECX | X86_REG_EDX => 4,
         X86_REG_RAX | X86_REG_RBP | X86_REG_RBX | X86_REG_RCX | X86_REG_RDI | X86_REG_RDX
         | X86_REG_RIP | X86_REG_RIZ | X86_REG_RSI | X86_REG_RSP => 8,
         _ => todo!(),

@@ -6,6 +6,7 @@ pub struct PtxInsn {
     pub label: Option<String>,
     pub pred: Option<PtxPred>,
     pub opcode: PtxOpcode,
+    pub uni: Option<()>,
     pub storage: Option<PtxStorage>,
     pub cmp_op: Option<PtxCmpOp>,
     pub bool_op: Option<PtxBoolOp>,
@@ -21,6 +22,9 @@ impl Display for PtxInsn {
             write!(f, "    ")?;
         }
         write!(f, "{}", self.opcode)?;
+        if let Some(_) = &self.uni {
+            write!(f, ".uni")?;
+        }
         if let Some(storage) = &self.storage {
             write!(f, "{}", storage)?;
         }

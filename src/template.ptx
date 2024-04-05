@@ -18,9 +18,26 @@
 .reg .i64 r13;
 .reg .i64 r14;
 .reg .i64 r15;
+
+// No EFLAGS, use predicate registers instead
 .reg .pred cf;
 .reg .pred zf;
 
+// Alias lower portions of registers
+#define eax rax
+#define ebx rbx
+#define ecx rcx
+#define edx rdx
+#define ax rax
+#define bx rbx
+#define cx rcx
+#define dx rdx
+#define al rax
+#define bl rbx
+#define cl rcx
+#define dl rdx
+
+// Emulate stack with local storage
 #def STACK_SIZE 64
 .local .u8 stack[STACK_SIZE];
 mov.u64, rsp, STACK_SIZE;
