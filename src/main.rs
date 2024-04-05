@@ -1,16 +1,16 @@
 use anyhow::{anyhow, Result};
 use capstone::arch::x86::X86Insn::*;
 use capstone::arch::x86::X86Reg::*;
-use capstone::arch::x86::{self, X86OpMem};
 use capstone::arch::x86::{X86Insn, X86OperandType};
-use capstone::prelude::*;
-use capstone::Insn;
+use capstone::arch::x86::{X86OpMem, X86Operand};
+use capstone::arch::{x86, BuildsCapstone, DetailsArchInsn};
+use capstone::{Capstone, Insn, InsnId, RegId};
 use std::mem::transmute;
 
 const _PTX_TEMPLATE: &str = include_str!("template.ptx");
 
 fn main() -> Result<()> {
-    const CODE: & [u8] = b"\x55\x48\x89\xE5\x48\x89\x7D\xF8\x48\x89\x75\xF0\x48\xC7\x45\xD8\x00\x00\x00\x00\x48\x8B\x45\xD8\x48\x3B\x45\xF0\x73\x21\x48\x8B\x45\xF8\x48\x8B\x4D\xD8\x8A\x0C\x08\x48\x8B\x45\xD8\x88\x4C\x05\xE6\x48\x8B\x45\xD8\x48\x83\xC0\x01\x48\x89\x45\xD8\xEB\xD5\x66\xC7\x45\xD6\x00\x00\x48\xC7\x45\xC8\x00\x00\x00\x00\x48\x83\x7D\xC8\x05\x73\x21\x48\x8B\x45\xC8\x0F\xB6\x4C\x05\xE6\x0F\xB7\x45\xD6\x01\xC8\x66\x89\x45\xD6\x48\x8B\x45\xC8\x48\x83\xC0\x01\x48\x89\x45\xC8\xEB\xD8\x0F\xB7\x45\xD6\x5D\xC3";
+    const CODE: &[u8] = b"\x55\x48\x89\xE5\x48\x89\x7D\xF8\x48\x89\x75\xF0\x48\xC7\x45\xD8\x00\x00\x00\x00\x48\x8B\x45\xD8\x48\x3B\x45\xF0\x73\x21\x48\x8B\x45\xF8\x48\x8B\x4D\xD8\x8A\x0C\x08\x48\x8B\x45\xD8\x88\x4C\x05\xE6\x48\x8B\x45\xD8\x48\x83\xC0\x01\x48\x89\x45\xD8\xEB\xD5\x66\xC7\x45\xD6\x00\x00\x48\xC7\x45\xC8\x00\x00\x00\x00\x48\x83\x7D\xC8\x05\x73\x21\x48\x8B\x45\xC8\x0F\xB6\x4C\x05\xE6\x0F\xB7\x45\xD6\x01\xC8\x66\x89\x45\xD6\x48\x8B\x45\xC8\x48\x83\xC0\x01\x48\x89\x45\xC8\xEB\xD8\x0F\xB7\x45\xD6\x5D\xC3";
 
     let cs = Capstone::new()
         .x86()
@@ -124,11 +124,7 @@ pub fn try_push_ptx(insn: &Insn, cs: &Capstone, ptx: &mut Vec<String>) -> Result
                 format_mem(&lhs),
                 rhs
             ));
-            ptx.push(format!(
-                "\tsetp.eq.s64 zf, {}, {};",
-                format_mem(&lhs),
-                rhs
-            ));
+            ptx.push(format!("\tsetp.eq.s64 zf, {}, {};", format_mem(&lhs), rhs));
         }
         (X86_INS_JAE, Some(X86OperandType::Imm(dst)), None, None) => {
             ptx.push(format!("L_{:X}:\t@!cf bra L_{:X};", insn.address(), dst));
@@ -145,37 +141,57 @@ pub fn try_push_ptx(insn: &Insn, cs: &Capstone, ptx: &mut Vec<String>) -> Result
         (X86_INS_JMP, Some(X86OperandType::Imm(dst)), None, None) => {
             ptx.push(format!("L_{:X}:\tbra.uni L_{:X};", insn.address(), dst));
         }
-        // (
-        //     X86_INS_MOVZX,
-        //     Some(X86OperandType::Reg(dst)),
-        //     Some(X86OperandType::Mem(src)),
-        //     None,
-        // ) => {
-        //     ptx.push(PtxInsn {
-        //         label: Some(label_address(insn.address())),
-        //         pred: None,
-        //         opcode: PtxOpcode::Mov,
-        //         uni: None,
-        //         storage: None,
-        //         cmp_op: None,
-        //         bool_op: None,
-        //         types: smallvec![ptx_reg_type(dst)],
-        //         operands: smallvec![
-        //             PtxOperand::Reg(reg_name(dst.0 as u32, cs)?),
-        //             PtxOperand::Array {
-        //                 name: STACK.to_string(),
-        //                 offsets: smallvec![
-        //                     PtxArrayOffset::Reg(reg_name(src.base().0 as u32, cs)?),
-        //                     PtxArrayOffset::Imm(src.disp())
-        //                 ]
-        //             },
-        //         ],
-        //     });
-        // }
+        (X86_INS_MOVZX, Some(X86OperandType::Reg(dst)), Some(X86OperandType::Mem(src)), None) => {
+            ptx.push(format!(
+                "L_{:X}:\tld.local.{} {}, {};",
+                insn.address(),
+                reg_uint_type(dst),
+                reg_name(dst),
+                format_mem(&src)
+            ));
+            ptx.push(format!(
+                "\tand.{} {}, {}, {};",
+                reg_bool_type(dst),
+                reg_name(dst),
+                reg_name(dst),
+                operand_mask(&detail.operands().nth(1).unwrap())
+            ));
+        }
+        (X86_INS_ADD, Some(X86OperandType::Reg(dst)), Some(X86OperandType::Reg(src)), None) => {
+            ptx.push(format!(
+                "L_{:X}:\tadd.{} {}, {}, {};",
+                insn.address(),
+                reg_uint_type(dst),
+                reg_name(dst),
+                reg_name(dst),
+                reg_name(src)
+            ));
+        }
+        (X86_INS_POP, Some(X86OperandType::Reg(dst)), None, None) => {
+            ptx.push(format!(
+                "L_{:X}:\tld.local.{} {}, [stack + rsp];",
+                insn.address(),
+                reg_uint_type(dst),
+                reg_name(dst)
+            ));
+            ptx.push(format!("\tadd.u64 rsp, rsp, {};", reg_size(dst)));
+        }
+        (X86_INS_RET, None, None, None) => {}
         _ => todo!(),
     }
 
     Ok(())
+}
+
+fn reg_size(reg: RegId) -> u8 {
+    match reg.0 as u32 {
+        X86_REG_AL | X86_REG_BL | X86_REG_CL | X86_REG_DL => 1,
+        X86_REG_AX | X86_REG_BX | X86_REG_CX | X86_REG_DX => 2,
+        X86_REG_EAX | X86_REG_EBX | X86_REG_ECX | X86_REG_EDX => 4,
+        X86_REG_RAX | X86_REG_RBP | X86_REG_RBX | X86_REG_RCX | X86_REG_RDI | X86_REG_RDX
+        | X86_REG_RIP | X86_REG_RIZ | X86_REG_RSI | X86_REG_RSP => 8,
+        _ => todo!(),
+    }
 }
 
 fn reg_uint_type(reg: RegId) -> &'static str {
@@ -198,18 +214,17 @@ fn reg_sint_type(reg: RegId) -> &'static str {
     }
 }
 
-pub fn reg_size(reg: RegId) -> u8 {
-    match reg.0 as u32 {
-        X86_REG_AL | X86_REG_BL | X86_REG_CL | X86_REG_DL => 1,
-        X86_REG_AX | X86_REG_BX | X86_REG_CX | X86_REG_DX => 2,
-        X86_REG_EAX | X86_REG_EBX | X86_REG_ECX | X86_REG_EDX => 4,
-        X86_REG_RAX | X86_REG_RBP | X86_REG_RBX | X86_REG_RCX | X86_REG_RDI | X86_REG_RDX
-        | X86_REG_RIP | X86_REG_RIZ | X86_REG_RSI | X86_REG_RSP => 8,
+fn reg_bool_type(reg: RegId) -> &'static str {
+    match reg_size(reg) {
+        1 => "b8",
+        2 => "b16",
+        4 => "b32",
+        8 => "b64",
         _ => todo!(),
     }
 }
 
-pub fn reg_name(reg: RegId) -> &'static str {
+fn reg_name(reg: RegId) -> &'static str {
     match reg.0 as u32 {
         X86_REG_AL => "al",
         X86_REG_BL => "bl",
@@ -241,5 +256,14 @@ fn format_mem(mem: &X86OpMem) -> String {
         format!("[stack + {}]", mem.disp())
     } else {
         format!("[stack + {} + {}]", reg_name(mem.base()), mem.disp())
+    }
+}
+
+fn operand_mask(operand: &X86Operand) -> &'static str {
+    match operand.size {
+        1 => "0xFF",
+        2 => "0xFFFF",
+        4 => "0xFFFFFFFF",
+        _ => todo!(),
     }
 }
