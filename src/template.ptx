@@ -38,6 +38,6 @@
 #define dl rdx
 
 // Emulate stack with local storage
-#def STACK_SIZE 64
+#define STACK_SIZE 64
 .local .u8 stack[STACK_SIZE];
 mov.u64, rsp, STACK_SIZE;
