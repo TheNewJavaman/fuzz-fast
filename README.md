@@ -4,7 +4,7 @@ GPU-accelerated fuzzing by emulating x86 on CUDA.
 
 ## Sample
 
-- C:
+- C
     ```c
     #include <stddef.h>
     #include <stdint.h>
@@ -24,7 +24,7 @@ GPU-accelerated fuzzing by emulating x86 on CUDA.
         return sum;
     }
     ```
-- x86: 
+- x86
     ```
     0x0: push rbp
     0x1: mov rbp, rsp
@@ -60,7 +60,7 @@ GPU-accelerated fuzzing by emulating x86 on CUDA.
     0x79: pop rbp
     0x7a: ret
     ```
-- PTX:
+- PTX
     ```
     L_0:    sub.u64 rsp, rsp, 8;
             st.local.u64 [stack + rsp], rbp;
